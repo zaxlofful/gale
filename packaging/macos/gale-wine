@@ -1,0 +1,108 @@
+#!/bin/sh
+set -eu
+
+die() {
+  status=$1
+  shift
+  printf 'gale-wine: %s\n' "$*" >&2
+  exit "$status"
+}
+
+host_os=${GALE_WINE_OS:-$(uname -s)}
+host_arch=${GALE_WINE_ARCH:-$(uname -m)}
+
+[ "$host_os" = Darwin ] || die 64 "requires macOS"
+[ "$host_arch" = arm64 ] || die 64 "requires Apple Silicon"
+
+case ${GALE_WINE_ROSETTA_CHECK:-auto} in
+  true) ;;
+  false)
+    die 69 "Rosetta 2 is required; install it with: softwareupdate --install-rosetta --agree-to-license"
+    ;;
+  auto)
+    /usr/bin/arch -x86_64 /usr/bin/true >/dev/null 2>&1 ||
+      die 69 "Rosetta 2 is required; install it with: softwareupdate --install-rosetta --agree-to-license"
+    ;;
+  *)
+    die 64 "GALE_WINE_ROSETTA_CHECK must be auto, true, or false"
+    ;;
+esac
+
+find_wine() {
+  if [ -n "${GALE_WINE_BIN:-}" ] && [ -x "$GALE_WINE_BIN" ]; then
+    printf '%s\n' "$GALE_WINE_BIN"
+    return
+  fi
+
+  for candidate in \
+    "$(command -v wine64 2>/dev/null || true)" \
+    "$(command -v wine 2>/dev/null || true)" \
+    "/Applications/Wine Stable.app/Contents/Resources/wine/bin/wine64" \
+    "/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine64" \
+    "/Applications/Wine Staging.app/Contents/Resources/wine/bin/wine64"
+  do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+  done
+
+  return 1
+}
+
+wine_bin=$(find_wine) ||
+  die 69 "no compatible Wine runtime was found; install a supported WineHQ package first"
+wine_dir=$(dirname -- "$wine_bin")
+wineboot_bin="$wine_dir/wineboot"
+winepath_bin="$wine_dir/winepath"
+
+[ -x "$wineboot_bin" ] || die 69 "Wine runtime is missing wineboot: $wineboot_bin"
+[ -x "$winepath_bin" ] || die 69 "Wine runtime is missing winepath: $winepath_bin"
+
+msi=${GALE_WINE_MSI:-@GALE_WINE_MSI@}
+[ -f "$msi" ] || die 66 "MSI payload is missing: $msi"
+
+version=${GALE_WINE_VERSION:-1.16.1}
+prefix=${GALE_WINE_PREFIX:-"$HOME/Library/Application Support/GaleWine"}
+marker="$prefix/.gale-wrapper-version"
+export WINEPREFIX=$prefix
+
+if [ ! -f "$prefix/system.reg" ]; then
+  printf 'Initializing Gale Wine prefix...\n'
+  mkdir -p "$prefix"
+  "$wineboot_bin" -u || die 70 "Wine prefix initialization failed"
+fi
+
+installed_version=
+if [ -f "$marker" ]; then
+  IFS= read -r installed_version <"$marker" || true
+fi
+
+if [ "$installed_version" != "$version" ]; then
+  printf 'Installing Gale %s...\n' "$version"
+  windows_msi=$("$winepath_bin" -w "$msi") ||
+    die 70 "Wine could not translate the MSI path"
+  "$wine_bin" msiexec /i "$windows_msi" /qn ||
+    die 70 "Gale MSI installation failed"
+  printf '%s\n' "$version" >"$marker"
+fi
+
+find_gale_exe() {
+  for candidate in \
+    "$prefix/drive_c/Program Files/Gale/gale.exe" \
+    "$prefix/drive_c/Program Files/Gale/Gale.exe" \
+    "$prefix/drive_c/users/$USER/AppData/Local/Gale/gale.exe" \
+    "$prefix/drive_c/users/$USER/AppData/Local/Gale/Gale.exe"
+  do
+    if [ -f "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+  done
+  return 1
+}
+
+gale_exe=$(find_gale_exe) ||
+  die 70 "Gale was installed but gale.exe could not be found in the Wine prefix"
+
+exec "$wine_bin" "$gale_exe" "$@"

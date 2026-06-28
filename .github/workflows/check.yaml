@@ -9,7 +9,12 @@ on:
 
 jobs:
   check-backend:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      matrix:
+        include:
+          - platform: ubuntu-latest
+          - platform: macos-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -17,7 +22,8 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install build dependencies
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'ubuntu-latest'
         run: |
           sudo apt update;
           sudo apt-get install -y libappindicator3-dev librsvg2-dev libudev-dev patchelf \
@@ -32,6 +38,11 @@ jobs:
         run: |
           cd src-tauri
           cargo clippy --all-targets -- -D warnings
+
+      - name: Run Rust tests
+        run: |
+          cd src-tauri
+          cargo test
 
   check-frontend:
     runs-on: ubuntu-latest

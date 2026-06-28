@@ -135,6 +135,19 @@ A modern and lightweight mod manager for [Thunderstore](https://thunderstore.io)
 
 ---
 
+### macOS
+
+Gale now builds as a native unsigned Apple Silicon `.app` bundle from source.
+Game discovery and launching are not yet supported on macOS, but browsing, profiles, and settings are available.
+
+Build with:
+
+```bash
+pnpm tauri build --bundles app
+```
+
+The generated app is available under `src-tauri/target/release/bundle/macos/`.
+
 Want to build it from source? See the [wiki](https://github.com/Kesomannen/gale/wiki/building-from-source).
 
 ## Screenshots

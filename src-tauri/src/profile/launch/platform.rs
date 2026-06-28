@@ -51,6 +51,11 @@ fn create_steam_command(game_dir: &Path, game: Game, prefs: &Prefs) -> Result<Co
     Ok(command)
 }
 
+#[cfg(target_os = "macos")]
+fn create_base_steam_command() -> Result<Command> {
+    bail!("Steam launching is not yet supported on macOS")
+}
+
 #[cfg(target_os = "windows")]
 fn create_base_steam_command() -> Result<Command> {
     use crate::util::fs::PathExt;

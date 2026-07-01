@@ -60,6 +60,10 @@ impl LaunchMode {
 
 impl ManagedGame {
     pub fn launch(&self, vanilla: bool, prefs: &Prefs, app: &AppHandle) -> Result<()> {
+        if cfg!(target_os = "macos") {
+            bail!("game discovery and launching are not yet supported on macOS");
+        }
+
         let game_dir =
             locate_game_dir(self.game, prefs).context("failed to locate game directory")?;
         if let Err(err) = self.copy_required_files(&game_dir) {
@@ -141,7 +145,7 @@ impl ManagedGame {
                 is_proton
             };
 
-            #[cfg(target_os = "windows")]
+            #[cfg(not(target_os = "linux"))]
             let is_proton = false;
 
             if is_proton {

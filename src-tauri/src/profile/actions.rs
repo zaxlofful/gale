@@ -4,7 +4,7 @@ use std::{
     path::PathBuf,
 };
 
-use eyre::{Context, ContextCompat, OptionExt, Result, anyhow, bail, ensure};
+use eyre::{Context, OptionExt, Result, anyhow, bail, ensure};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Listener};
@@ -449,6 +449,12 @@ impl ManagedGame {
         Ok(new_profile)
     }
 
+    #[cfg(target_os = "macos")]
+    pub fn create_desktop_shortcut(&self) -> Result<()> {
+        bail!("desktop shortcuts are not yet supported on macOS")
+    }
+
+    #[cfg(not(target_os = "macos"))]
     pub fn create_desktop_shortcut(&self) -> Result<()> {
         let profile = self.active_profile();
 

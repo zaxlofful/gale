@@ -3,17 +3,20 @@ use std::{
     fs::File,
     io::{self, Cursor, Seek, Write},
     path::{Path, PathBuf},
+    sync::LazyLock,
 };
 
-use base64::{prelude::BASE64_STANDARD, Engine};
+use base64::{Engine, prelude::BASE64_STANDARD};
 use eyre::Context;
+use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
+use tracing::info;
 use uuid::Uuid;
 use walkdir::WalkDir;
-use zip::{write::SimpleFileOptions, ZipWriter};
+use zip::{ZipWriter, write::SimpleFileOptions};
 
-use super::{install::ModInstall, Profile, Result};
+use super::{Profile, Result, install::ModInstall};
 use crate::{
     game::Game,
     state::ManagerExt,
@@ -119,11 +122,7 @@ pub(super) fn export_zip(profile: &Profile, writer: impl Write + Seek, game: Gam
     serde_yaml::to_writer(&mut zip, &manifest).context("failed to write profile manifest")?;
 
     write_config(
-        find_config(
-            &profile.path,
-            IncludeExtensions::Default,
-            IncludeGenerated::No,
-        ),
+        find_config(&profile.path, game.mod_loader.mod_config_dirs()),
         &profile.path,
         &mut zip,
     )?;
@@ -146,6 +145,8 @@ async fn export_code(app: &AppHandle) -> Result<Uuid> {
 
         base64
     };
+
+    info!(len = base64.len(), "exporting profile code");
 
     const URL: &str = "https://thunderstore.io/api/experimental/legacyprofile/create/";
 
@@ -181,55 +182,47 @@ where
     Ok(())
 }
 
-const COMMON_EXTENSIONS: &[&str] = &["cfg", "txt", "json", "yml", "yaml", "ini", "xml"];
+pub fn find_config<'a>(
+    root: &'a Path,
+    config_dirs: &'a [&str],
+) -> impl Iterator<Item = PathBuf> + 'a {
+    static INCLUDE_SET: LazyLock<GlobSet> = LazyLock::new(|| {
+        GlobSetBuilder::new()
+            .add(Glob::new("BepInEx/config/*").unwrap())
+            .add(Glob::new("*.{cfg,txt,json,yml,yaml,ini}").unwrap())
+            .build()
+            .unwrap()
+    });
 
-const GENERATED_FILES: &[&str] = &[
-    "profile.json",
-    "manifest.json",
-    "mods.yml",
-    "doorstop_config.ini",
-    "snapshots",
-    "_state",
-    "MelonLoader/Dependencies/Il2CppAssemblyGenerator/Config.cfg",
-];
+    static EXCLUDE_SET: LazyLock<GlobSet> = LazyLock::new(|| {
+        GlobSetBuilder::new()
+            .add(Glob::new("{dotnet,_state,MelonLoader}/*").unwrap())
+            .add(Glob::new("dotnet/*").unwrap())
+            .add(Glob::new("GDWeave/{GDWeave.log,core/*,mods/*}").unwrap())
+            .add(Glob::new("mods.yml").unwrap())
+            .add(
+                GlobBuilder::new("BepInEx/plugins/*/manifest.json")
+                    .literal_separator(true)
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap()
+    });
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum IncludeExtensions {
-    /// All extensions.
-    All,
-    /// Only common config extensions (see [`COMMON_EXTENSIONS`]).
-    #[default]
-    Default,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IncludeGenerated {
-    /// Include every file (as long as they fit [`IncludeExtensions`]).
-    Yes,
-    /// Skip common mod-manager generated files (see [`GENERATED_FILES`]).
-    No,
-}
-
-pub fn find_config(
-    root: &Path,
-    include_extensions: IncludeExtensions,
-    include_generated: IncludeGenerated,
-) -> impl Iterator<Item = PathBuf> + '_ {
     WalkDir::new(root)
         .into_iter()
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_file())
-        .map(move |entry| entry.into_path().strip_prefix(root).unwrap().to_path_buf())
-        .filter(move |path| {
-            matches!(include_generated, IncludeGenerated::Yes)
-                || !GENERATED_FILES
-                    .iter()
-                    .any(|exc| path.starts_with(exc) || path.ends_with(exc))
+        .map(move |entry| {
+            entry
+                .into_path()
+                .strip_prefix(root)
+                .expect("path should be child of root")
+                .to_path_buf()
         })
         .filter(move |path| {
-            matches!(include_extensions, IncludeExtensions::All)
-                || path
-                    .extension()
-                    .is_some_and(|ext| COMMON_EXTENSIONS.iter().any(|inc| *inc == ext))
+            (config_dirs.iter().any(|dir| path.starts_with(dir)) || INCLUDE_SET.is_match(path))
+                && !EXCLUDE_SET.is_match(path)
         })
 }
